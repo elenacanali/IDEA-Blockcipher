@@ -1,0 +1,258 @@
+//Function that divides sequences in sub-blocks of 16 bits
+function SubBlocks(S)
+	Res:=[];
+
+	for j in [1..(#S/16)] do 
+		Res[j]:=[];
+		for i in [0..15] do
+			Res[j]:=Append(Res[j],S[16*j-i]);
+		end for;
+	end for;
+
+	return Res;
+end function;
+
+//Function that merge the sub-blocks in an unique sequence
+function UnionSubBlocks(S)
+	Res:=[];
+
+	for i in [1..#S] do
+		S[i]:=Reverse(S[i]);
+		Res:=Res cat S[i];
+	end for;
+
+	return Res;
+end function;
+
+
+//Add zeros on the right to reach the sequence S with length L
+function RLength(S,L)
+
+	for i in [1..L-#S] do
+		S:=S cat [0];
+	end for;
+
+	return S;
+end function;
+
+
+//OPERATIONS
+//Sum modulo 2^16
+function SumSubBlocks(V,W);
+	V:=Seqint(V,2);
+	W:=Seqint(W,2);
+
+	Res:=(V+W) mod (2^16);
+	Res:=Intseq(Res,2);
+
+	return RLength(Res,16);
+end function;
+
+//Product mod 2^16+1
+function ProductSubBlocks(V,W)
+	V:=Seqint(V,2);
+	if V eq 0 then
+		V:=2^16;
+	end if;
+
+	W:=Seqint(W,2);
+	if W eq 0 then
+		W:=2^16;
+	end if;
+	
+	Res:=(V*W) mod (2^(16)+1);
+	Res:=Intseq(Res,2);
+	
+	if #Res eq 17 then
+		Res:=[];
+	end if;
+
+	return RLength(Res,16);
+end function;
+
+//XOR of two sequences
+function XorSubBlocks(V,W)
+	Res:=[];
+
+	for i in [1..16] do
+		Res[i]:=(V[i]+W[i]) mod 2;
+	end for;
+
+	return Res;
+end function;
+
+
+//OPERATIONS FOR DECRYPTION PHASE
+//Function that perform the multiplicative inverse modulo 2^16+1 of a sequence V
+function InvSubBlocks(V)
+	V:=Seqint(V,2);
+
+	if V eq 0 then
+		V:=2^16;
+	end if;
+
+	Res:=Modinv(V,2^(16)+1);
+	Res:=Intseq(Res,2);
+
+	if #Res eq 17 then
+		Res:=[];
+	end if;
+
+	return RLength(Res,16);
+end function;
+
+//Function that perform the additive inverse modulo 2^16
+function MinusSubBlocks(V)
+	V:=Seqint(V,2);
+
+	Res:=(2^16)-V;
+	Res:=Intseq(Res,2);
+
+	if #Res eq 17 then
+		Res:=[];
+	end if;
+
+	return RLength(Res,16);
+end function;
+
+
+
+//THE KEY-SCHEDULE FOR ENCRYPTION: takes in input a sequence of 128 bits and returns sub-blocks of 16 bits
+function IDEA_Key(K)
+
+	Key:=K;
+	
+	for i in [1..6] do 
+		K:=Rotate(K,25);
+		Key:=K cat Key ;
+	end for;
+
+	Key:=SubBlocks(Reverse(Key));
+
+	return Key;
+end function;
+
+
+//THE KEY-SCHEDULE FOR THE DECRYPTION PHASE: takes in input a sequence of 128 bits and returns 52 sub-blocks of 16 bits each
+function IDEA_InvKey(K)
+	K:=IDEA_Key(K);
+
+	//Round1
+	IK:=[];
+	IK[1]:=InvSubBlocks(K[49]);
+	IK[2]:=MinusSubBlocks(K[50]);
+	IK[3]:=MinusSubBlocks(K[51]);
+	IK[4]:=InvSubBlocks(K[52]);
+	IK[5]:=K[47];
+	IK[6]:=K[48];
+
+	//Round from 2 to 8
+	for i in [1..7] do 
+		IK[6*i+1]:=InvSubBlocks(K[6*(8-i)+1]);
+		IK[6*i+2]:=MinusSubBlocks(K[6*(8-i)+3]);
+		IK[6*i+3]:=MinusSubBlocks(K[6*(8-i)+2]);
+		IK[6*i+4]:=InvSubBlocks(K[6*(8-i)+4]);
+		IK[6*i+5]:=K[6*(7-i)+5];
+		IK[6*i+6]:=K[6*(7-i)+6];
+	end for;
+
+	//Round 9
+	IK[49]:=InvSubBlocks(K[1]);
+	IK[50]:=MinusSubBlocks(K[2]);
+	IK[51]:=MinusSubBlocks(K[3]);
+	IK[52]:=InvSubBlocks(K[4]);
+	
+	return IK;
+end function;
+
+
+//ROUND OPERATIONS(round from 1 to 9): the operations are the same for encryption and decryption phase
+function Rounds(P,K)
+	
+	//Rounds from 1 to 8
+	for i in [0..7] do
+		P[1]:=ProductSubBlocks(P[1],K[6*i+1]);
+		P[2]:=SumSubBlocks(P[2],K[6*i+2]); 
+		P[3]:=SumSubBlocks(P[3],K[6*i+3]); 
+		P[4]:=ProductSubBlocks(P[4],K[6*i+4]); 
+
+		Tmp:=[];
+		Tmp[1]:=ProductSubBlocks(XorSubBlocks(P[1],P[3]),K[6*i+5]);
+		Tmp[2]:=SumSubBlocks(XorSubBlocks(P[2],P[4]),Tmp[1]);
+		Tmp[2]:=ProductSubBlocks(Tmp[2],K[6*i+6]);
+		Tmp[3]:=SumSubBlocks(Tmp[1],Tmp[2]); 
+
+		Tmp[4]:=XorSubBlocks(P[2],Tmp[3]);
+		P[1]:=XorSubBlocks(P[1],Tmp[2]);
+		P[2]:=XorSubBlocks(P[3],Tmp[2]);
+		P[3]:=Tmp[4];
+		P[4]:=XorSubBlocks(P[4],Tmp[3]);
+	end for;
+
+	//Round 9
+	R:=[];
+	R[1]:=ProductSubBlocks(P[1],K[49]);
+	R[2]:=SumSubBlocks(P[3],K[50]);
+	R[3]:=SumSubBlocks(P[2],K[51]);
+	R[4]:=ProductSubBlocks(P[4],K[52]);
+
+	return R;
+end function;
+
+
+//ENCRYPTION PROCESS
+function IDEA_Encryption(K,P)
+	
+	//Conversion of strings in sequence of sequences
+	P:=StringToInteger(P,16); 
+	P:=Reverse(RLength(Intseq(P,2),16*4));
+
+	K:=StringToInteger(K,16); 
+	K:=RLength(Intseq(K,2),16*8); 
+	
+	P:=SubBlocks(P);
+	K:=IDEA_Key(K);
+	
+	//Round operations
+	C:=Rounds(P,K);
+
+	//C is now a sequence of sequences: it is used UnionSubBlocks to merge them in a unique sequence
+	C:=Reverse(UnionSubBlocks(C));
+
+	//The sequence is transformed in a string of 16 characters
+	C:=IntegerToString(Seqint(C,2),16);
+	for i in [1..16-#C] do 
+		C:="0" cat C;
+	end for;
+
+	return C;
+end function;
+
+
+//DECRYPTION PROCESS
+function IDEA_Decryption(K,C)
+	
+	//Conversion of strings in sequence of sequences
+	C:=StringToInteger(C,16); 
+	C:=Reverse(RLength(Intseq(C,2),16*4));
+
+	K:=StringToInteger(K,16); 
+	K:=RLength(Intseq(K,2),16*8);
+
+	C:=SubBlocks(C);
+	K:=IDEA_InvKey(K);
+	
+	//Round operations
+	P:=Rounds(C,K);
+
+	//P is now a sequence of sequences: it is used UnionSubBlocks to merge them in a unique sequence
+	P:=Reverse(UnionSubBlocks(P));
+
+	//The sequence is transformed in a string of 16 characters
+	P:=IntegerToString(Seqint(P,2),16);
+	for i in [1..16-#P] do 
+		P:="0" cat P;
+	end for;
+
+	return P;
+end function;
